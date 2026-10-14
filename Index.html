@@ -106,11 +106,16 @@
     <iframe id="thermal-print-iframe" class="fixed right-0 bottom-0 w-0 h-0 border-0 opacity-0 pointer-events-none"></iframe>
 
     <script>
-        // URL Database Google Apps Script Aktif (Diperbarui ke URL baru Anda)
-        const DATABASE_URL = "https://script.google.com/macros/s/AKfycbVewZpjTm7kR44rUK6-v6hYagWGpKnJyvwnqabyM6iq4ent5FM_jzFz5wPhQ12bLwRcg/exec";
+        // URL Database Google Apps Script Aktif (Diperbarui dengan huruf z)
+        const DATABASE_URL = "https://script.google.com/macros/s/AKfycbzVewZpjTm7kR44rUK6-v6hYagWGpKnJyvwnqabyM6iq4ent5FM_jzFz5wPhQ12bLwRcg/exec";
 
         function getActiveScriptUrl() {
             const saved = localStorage.getItem('tokoque_script_url');
+            // Jika tersimpan URL versi lama tanpa huruf z, otomatis ganti ke URL yang benar
+            if (saved && saved.includes('AKfycbVewZpj')) {
+                localStorage.setItem('tokoque_script_url', DATABASE_URL);
+                return DATABASE_URL;
+            }
             if (saved && saved.trim() !== '') {
                 return saved.trim();
             }
@@ -118,6 +123,40 @@
                 return state.settings.scriptUrl.trim();
             }
             return DATABASE_URL;
+        }
+
+        // Helper JSONP untuk menarik data tanpa hambatan blokir CORS saat file dibuka langsung dari komputer (file:///)
+        function fetchWithJsonp(url, timeout = 12000) {
+            return new Promise((resolve, reject) => {
+                const cbName = 'tokoque_cb_' + Date.now();
+                const script = document.createElement('script');
+                let timer = null;
+
+                window[cbName] = function(data) {
+                    cleanup();
+                    resolve(data);
+                };
+
+                function cleanup() {
+                    if (timer) clearTimeout(timer);
+                    if (script && script.parentNode) script.parentNode.removeChild(script);
+                    delete window[cbName];
+                }
+
+                timer = setTimeout(() => {
+                    cleanup();
+                    reject(new Error("Koneksi timeout ke Google Apps Script"));
+                }, timeout);
+
+                script.onerror = function() {
+                    cleanup();
+                    reject(new Error("Gagal memuat data dari Google"));
+                };
+
+                const delim = url.includes('?') ? '&' : '?';
+                script.src = `${url}${delim}callback=${cbName}&nocache=${Date.now()}`;
+                document.body.appendChild(script);
+            });
         }
 
         let state = {
@@ -1478,8 +1517,165 @@
             }
         };
 
+        // Fungsi mencari nomor barcode BRG tertinggi untuk membuat kode otomatis berikutnya
+        function getNextProductBarcode() {
+            let maxNum = 0;
+            let padLength = 3; // Standar minimal 3 digit (BRG001)
+
+            (state.products || []).forEach(p => {
+                let code = String(p.barcode || '').trim();
+                let match = code.match(/^BRG(\d+)$/i);
+                if (match && match[1]) {
+                    let num = parseInt(match[1], 10);
+                    if (num > maxNum) {
+                        maxNum = num;
+                        if (match[1].length > padLength) {
+                            padLength = match[1].length;
+                        }
+                    }
+                }
+            });
+
+            let nextNum = maxNum + 1;
+            let padded = String(nextNum).padStart(Math.max(3, padLength), '0');
+            return 'BRG' + padded;
+        }
+
+        window.clearBarcodeModalInput = function() {
+            const input = document.getElementById('mb-barcode');
+            if (input) {
+                input.value = '';
+                input.focus();
+                showToast("Barcode dikosongkan. Siap scan atau ketik manual.", "info");
+            }
+        };
+
+        window.isiBarcodeOtomatisModal = function() {
+            const input = document.getElementById('mb-barcode');
+            if (input) {
+                input.value = getNextProductBarcode();
+                showToast("Kode otomatis baru diterapkan: " + input.value, "success");
+            }
+        };
+
+        window.toggleTambahKategoriInline = function() {
+            const boxInput = document.getElementById('box-kategori-input');
+            const inputCustom = document.getElementById('mb-kategori-custom');
+            if (boxInput) {
+                boxInput.classList.toggle('hidden');
+                if (!boxInput.classList.contains('hidden') && inputCustom) {
+                    inputCustom.focus();
+                }
+                if (window.lucide) lucide.createIcons();
+            }
+        };
+
+        window.simpanKategoriBaruInline = function() {
+            const inputCustom = document.getElementById('mb-kategori-custom');
+            const sel = document.getElementById('mb-kategori');
+            if (!inputCustom || !sel) return;
+            const val = inputCustom.value.trim();
+            if (!val) return showToast("Ketik nama kategori baru!", "warning");
+
+            let exists = false;
+            for (let i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value.toLowerCase() === val.toLowerCase()) {
+                    sel.selectedIndex = i;
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                const opt = document.createElement('option');
+                opt.value = val;
+                opt.text = val;
+                opt.selected = true;
+                sel.appendChild(opt);
+            }
+            inputCustom.value = '';
+            document.getElementById('box-kategori-input').classList.add('hidden');
+            showToast(`Kategori "${val}" berhasil ditambahkan!`, "success");
+        };
+
+        window.batalKategoriBaruInline = function() {
+            const boxInput = document.getElementById('box-kategori-input');
+            if (boxInput) boxInput.classList.add('hidden');
+        };
+
+        window.toggleTambahSatuanInline = function() {
+            const boxInput = document.getElementById('box-satuan-input');
+            const inputCustom = document.getElementById('mb-satuan-custom');
+            if (boxInput) {
+                boxInput.classList.toggle('hidden');
+                if (!boxInput.classList.contains('hidden') && inputCustom) {
+                    inputCustom.focus();
+                }
+                if (window.lucide) lucide.createIcons();
+            }
+        };
+
+        window.simpanSatuanBaruInline = function() {
+            const inputCustom = document.getElementById('mb-satuan-custom');
+            const sel = document.getElementById('mb-satuan');
+            if (!inputCustom || !sel) return;
+            const val = inputCustom.value.trim();
+            if (!val) return showToast("Ketik nama satuan baru!", "warning");
+
+            let exists = false;
+            for (let i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value.toLowerCase() === val.toLowerCase()) {
+                    sel.selectedIndex = i;
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                const opt = document.createElement('option');
+                opt.value = val;
+                opt.text = val;
+                opt.selected = true;
+                sel.appendChild(opt);
+            }
+            inputCustom.value = '';
+            document.getElementById('box-satuan-input').classList.add('hidden');
+            showToast(`Satuan "${val}" berhasil ditambahkan!`, "success");
+        };
+
+        window.batalSatuanBaruInline = function() {
+            const boxInput = document.getElementById('box-satuan-input');
+            if (boxInput) boxInput.classList.add('hidden');
+        };
+
         window.openModalBarang = function(barcode = null) {
-            let p = barcode ? state.products.find(x => x.barcode === barcode) : { barcode: '', nama: '', kategori: 'Umum', harga_beli: 0, harga_jual: 0, stok: 10, satuan: 'Pcs' };
+            let isNew = !barcode;
+            let initialBarcode = isNew ? getNextProductBarcode() : barcode;
+            let p = barcode 
+                ? (state.products.find(x => x.barcode === barcode) || { barcode: barcode, nama: '', kategori: 'Umum', harga_beli: 0, harga_jual: 0, stok: 10, satuan: 'Pcs' }) 
+                : { barcode: initialBarcode, nama: '', kategori: 'Umum', harga_beli: 0, harga_jual: 0, stok: 10, satuan: 'Pcs' };
+
+            // Kumpulkan daftar kategori dari data yang sudah ada
+            let existingKategori = [...new Set((state.products || []).map(x => String(x.kategori || '').trim()).filter(Boolean))];
+            if (!existingKategori.some(k => k.toLowerCase() === 'umum')) existingKategori.unshift('Umum');
+            ['Sembako', 'Minuman', 'Snack', 'Alat Tulis Kantor', 'Elektronik', 'Accessories Handphone', 'Kecantikan', 'Obat Obatan', 'Rokok', 'Sandal', 'Mainan', 'Lainnya'].forEach(k => {
+                if (!existingKategori.some(e => e.toLowerCase() === k.toLowerCase())) {
+                    existingKategori.push(k);
+                }
+            });
+            if (p.kategori && !existingKategori.some(k => k.toLowerCase() === p.kategori.toLowerCase())) {
+                existingKategori.unshift(p.kategori);
+            }
+
+            // Kumpulkan daftar satuan dari data yang sudah ada
+            let existingSatuan = [...new Set((state.products || []).map(x => String(x.satuan || '').trim()).filter(Boolean))];
+            if (!existingSatuan.some(s => s.toLowerCase() === 'pcs')) existingSatuan.unshift('Pcs');
+            ['Pcs', 'Pak', 'Bks', 'Dus', 'Btl', 'Cup', 'Rcg', 'Kg', 'Meter', 'Lembar', 'Box', 'Strip', 'Klg', '2PCS'].forEach(s => {
+                if (!existingSatuan.some(e => e.toLowerCase() === s.toLowerCase())) {
+                    existingSatuan.push(s);
+                }
+            });
+            if (p.satuan && !existingSatuan.some(s => s.toLowerCase() === p.satuan.toLowerCase())) {
+                existingSatuan.unshift(p.satuan);
+            }
 
             const html = `
                 <div class="fixed inset-0 bg-slate-900/70 z-[120] flex items-center justify-center p-3 sm:p-4 backdrop-blur-sm">
@@ -1492,24 +1688,63 @@
                             <div>
                                 <div class="flex items-center justify-between mb-1">
                                     <label class="block font-bold text-slate-700">Barcode / Kode Produk <span class="text-rose-500">*</span></label>
-                                    <button type="button" onclick="openCameraScanner('modal-barang')" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-bold text-[11px] flex items-center gap-1 border border-indigo-200 shadow-sm active:scale-95 transition">
-                                        <i data-lucide="camera" class="w-3.5 h-3.5"></i> Scan Kamera
+                                    <div class="flex items-center gap-1.5">
+                                        <button type="button" onclick="isiBarcodeOtomatisModal()" class="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg font-bold text-[11px] flex items-center gap-1 border border-blue-200 shadow-sm active:scale-95 transition" title="Generate Barcode Otomatis">
+                                            <i data-lucide="sparkles" class="w-3.5 h-3.5 text-blue-600"></i> Auto Kode
+                                        </button>
+                                        <button type="button" onclick="openCameraScanner('modal-barang')" class="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-bold text-[11px] flex items-center gap-1 border border-indigo-200 shadow-sm active:scale-95 transition" title="Scan Barcode via Kamera HP/PC">
+                                            <i data-lucide="camera" class="w-3.5 h-3.5"></i> Scan Kamera
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="relative">
+                                    <input type="text" id="mb-barcode" required value="${initialBarcode}" placeholder="Scan scanner atau ketik barcode..." class="w-full pl-3.5 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold outline-none focus:border-blue-600 focus:bg-white text-xs">
+                                    <button type="button" onclick="clearBarcodeModalInput()" class="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-rose-600 transition" title="Hapus / Kosongkan Barcode (Ketik manual atau scan)">
+                                        <i data-lucide="x" class="w-4 h-4"></i>
                                     </button>
                                 </div>
-                                <input type="text" id="mb-barcode" required value="${p.barcode}" placeholder="Scan alat scanner atau scan kamera..." class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono font-bold outline-none focus:border-blue-600">
+                                <p class="text-[10px] text-slate-400 mt-1">Kode otomatis berurutan (BRG...). Klik tombol <b>X</b> untuk mengosongkan jika ingin scan barcode barang fisik.</p>
                             </div>
                             <div>
                                 <label class="block font-bold text-slate-700 mb-1">Nama Produk <span class="text-rose-500">*</span></label>
-                                <input type="text" id="mb-nama" required value="${p.nama}" placeholder="Contoh: Kopi Bubuk 100g" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:border-blue-600">
+                                <input type="text" id="mb-nama" required value="${p.nama}" placeholder="Contoh: Kopi Bubuk 100g" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:border-blue-600 focus:bg-white">
                             </div>
                             <div class="grid grid-cols-2 gap-2">
                                 <div>
-                                    <label class="block font-bold text-slate-700 mb-1">Kategori</label>
-                                    <input type="text" id="mb-kategori" value="${p.kategori}" placeholder="Cth: Minuman" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:border-blue-600">
+                                    <div class="flex items-center justify-between mb-1">
+                                        <label class="block font-bold text-slate-700">Kategori</label>
+                                        <button type="button" onclick="toggleTambahKategoriInline()" class="text-blue-600 hover:text-blue-800 font-bold text-[10px] flex items-center gap-0.5 bg-blue-50 hover:bg-blue-100 px-1.5 py-0.5 rounded-lg border border-blue-200 transition" title="Tambah Kategori Baru">
+                                            <i data-lucide="plus" class="w-3 h-3"></i> Tambah
+                                        </button>
+                                    </div>
+                                    <div id="box-kategori-select">
+                                        <select id="mb-kategori" class="w-full px-2.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:border-blue-600 focus:bg-white text-xs">
+                                            ${existingKategori.map(cat => `<option value="${cat}" ${p.kategori.toLowerCase() === cat.toLowerCase() ? 'selected' : ''}>${cat}</option>`).join('')}
+                                        </select>
+                                    </div>
+                                    <div id="box-kategori-input" class="hidden flex gap-1 mt-1">
+                                        <input type="text" id="mb-kategori-custom" onkeydown="if(event.key==='Enter'){event.preventDefault();simpanKategoriBaruInline();}" placeholder="Nama kategori..." class="flex-1 px-2.5 py-1.5 bg-white border border-blue-400 rounded-lg font-bold text-xs outline-none">
+                                        <button type="button" onclick="simpanKategoriBaruInline()" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-[10px]">OK</button>
+                                        <button type="button" onclick="batalKategoriBaruInline()" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-600 rounded-lg font-bold text-[10px]"><i data-lucide="x" class="w-3 h-3"></i></button>
+                                    </div>
                                 </div>
                                 <div>
-                                    <label class="block font-bold text-slate-700 mb-1">Satuan</label>
-                                    <input type="text" id="mb-satuan" value="${p.satuan}" placeholder="Cth: Pcs, Bungkus" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:border-blue-600">
+                                    <div class="flex items-center justify-between mb-1">
+                                        <label class="block font-bold text-slate-700">Satuan</label>
+                                        <button type="button" onclick="toggleTambahSatuanInline()" class="text-blue-600 hover:text-blue-800 font-bold text-[10px] flex items-center gap-0.5 bg-blue-50 hover:bg-blue-100 px-1.5 py-0.5 rounded-lg border border-blue-200 transition" title="Tambah Satuan Baru">
+                                            <i data-lucide="plus" class="w-3 h-3"></i> Tambah
+                                        </button>
+                                    </div>
+                                    <div id="box-satuan-select">
+                                        <select id="mb-satuan" class="w-full px-2.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold outline-none focus:border-blue-600 focus:bg-white text-xs">
+                                            ${existingSatuan.map(sat => `<option value="${sat}" ${p.satuan.toLowerCase() === sat.toLowerCase() ? 'selected' : ''}>${sat}</option>`).join('')}
+                                        </select>
+                                    </div>
+                                    <div id="box-satuan-input" class="hidden flex gap-1 mt-1">
+                                        <input type="text" id="mb-satuan-custom" onkeydown="if(event.key==='Enter'){event.preventDefault();simpanSatuanBaruInline();}" placeholder="Nama satuan..." class="flex-1 px-2.5 py-1.5 bg-white border border-blue-400 rounded-lg font-bold text-xs outline-none">
+                                        <button type="button" onclick="simpanSatuanBaruInline()" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-[10px]">OK</button>
+                                        <button type="button" onclick="batalSatuanBaruInline()" class="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-600 rounded-lg font-bold text-[10px]"><i data-lucide="x" class="w-3 h-3"></i></button>
+                                    </div>
                                 </div>
                             </div>
                             <div class="grid grid-cols-2 gap-2">
@@ -1540,7 +1775,7 @@
 
         window.simpanBarang = async function(e, oldBarcode) {
             e.preventDefault();
-            const barcode = document.getElementById('mb-barcode').value.trim() || ('BRG' + Date.now().toString().slice(-6));
+            const barcode = document.getElementById('mb-barcode').value.trim() || getNextProductBarcode();
             const nama = document.getElementById('mb-nama').value.trim();
             const kategori = document.getElementById('mb-kategori').value.trim() || 'Umum';
             const satuan = document.getElementById('mb-satuan').value.trim() || 'Pcs';
@@ -1643,7 +1878,6 @@
             link.click();
         };
 
-        // FUNGSI IMPORT CSV DENGAN PENGIRIMAN BATCH LANGSUNG KE GOOGLE SHEETS
         window.prosesImportCSV = async function() {
             const fileInput = document.getElementById('csv-file-input');
             if (!fileInput || !fileInput.files.length) {
@@ -2837,36 +3071,32 @@
             }
 
             try {
+                let rawData = null;
                 const cacheBuster = new Date().getTime();
                 const fetchUrl = url + (url.includes('?') ? '&' : '?') + 'nocache=' + cacheBuster;
-                
-                let response;
-                try {
-                    response = await fetch(fetchUrl);
-                } catch (netErr) {
-                    throw new Error("KONEKSI DITOLAK GOOGLE (CORS Error): Google memblokir akses karena izin 'Who has access' belum diset ke 'Anyone'. Ikuti panduan Deploy!");
-                }
 
-                const responseText = await response.text();
-                let rawData;
-
+                // Coba ambil data: prioritaskan fetch, jika ada kendala CORS (seperti saat dibuka via file:///) otomatis fallback ke JSONP
                 try {
-                    rawData = JSON.parse(responseText);
-                } catch (parseError) {
-                    if (responseText.includes('ServiceLogin') || responseText.includes('accounts.google.com') || responseText.includes('<html') || responseText.trim().startsWith('<')) {
-                        throw new Error("IZIN AKSES BELUM 'ANYONE': Google mengarahkan request ke halaman login. Ubah pengaturan Deployment di Google Apps Script.");
-                    } else {
-                        throw new Error("Respon server bukan format JSON. Pastikan sudah menjalankan fungsi setupDatabase() di Apps Script.");
+                    const response = await fetch(fetchUrl);
+                    const responseText = await response.text();
+                    try {
+                        rawData = JSON.parse(responseText);
+                    } catch (parseErr) {
+                        rawData = await fetchWithJsonp(url);
                     }
+                } catch (fetchErr) {
+                    rawData = await fetchWithJsonp(url);
                 }
 
-                if (rawData && rawData.error) {
-                    throw new Error("Pesan dari Spreadsheet: " + rawData.error);
+                if (!rawData) {
+                    throw new Error("Data tidak diterima dari Google Spreadsheet");
                 }
 
-                let data = rawData;
-                if (rawData && rawData.data) data = rawData.data;
+                if (rawData.error) {
+                    throw new Error(rawData.error);
+                }
 
+                let data = rawData.data || rawData;
                 let productCount = 0;
                 let customerCount = 0;
 
@@ -2922,20 +3152,21 @@
                 if (statusBadge) {
                     statusBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Terhubung (${productCount} Brg)`;
                     statusBadge.className = "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200";
+                    statusBadge.onclick = null;
                 }
 
                 if (isManual) {
-                    showToast(`Data berhasil ditarik: ${productCount} Barang, ${customerCount} Pelanggan.`, "success");
+                    showToast(`Sinkron berhasil: ${productCount} Barang, ${customerCount} Pelanggan.`, "success");
                 }
             } catch (err) {
                 console.error("Gagal sinkron database:", err);
                 if (statusBadge) {
                     statusBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Gagal Sambung`;
-                    statusBadge.className = "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-rose-50 text-rose-600 border border-rose-200 cursor-pointer";
-                    statusBadge.onclick = () => openModalPanduanAksesGoogle(err.message);
+                    statusBadge.className = "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-rose-50 text-rose-600 border border-rose-200";
+                    statusBadge.onclick = null;
                 }
                 if (isManual) {
-                    openModalPanduanAksesGoogle(err.message);
+                    showToast("Gagal sinkron cloud: " + (err.message || "Periksa koneksi"), "error");
                 }
             } finally {
                 if (syncIcon) syncIcon.classList.remove('animate-spin');
